@@ -1,13 +1,11 @@
 import re
 import sys
-from types import prepare_class
 
 
 class ZFinder():
     def __init__(self, startTagValue):
         linePattern = f'G00 Z{startTagValue:.4f}'
         self.lineRegex = re.compile(linePattern)
-        # f'G00 Z{startTagValue:.4f}'
 
     def __call__(self, lineString):
         return self.lineRegex.search(lineString) is not None    
@@ -15,7 +13,10 @@ class ZFinder():
 
 class RampWriter():
     def __init__(self, zCutDepth, zCutFeedRate, zTravelHeight):
-        self.zCutCode = f'G01 Z{zCutDepth:.4f} F{zCutFeedRate:d}'
+        if zCutFeedRate is None:
+            self.zCutCode = f'G01 Z{zCutDepth:.4f}'
+        else:
+            self.zCutCode = f'G01 Z{zCutDepth:.4f} F{zCutFeedRate:d}'
         self.zTravelHeightCode = f'G00 Z{zTravelHeight:.4f}'
         self.gcodeRegex = re.compile(r'G0[1-3]')
         self.xRegex = re.compile(r'(?<=X)\-?\d+\.\d{4}')
@@ -32,11 +33,23 @@ class RampWriter():
     def __call__(self, file, lineA='', lineB='', lineRampEnd=''):
         file.write('(RAMP ADDED)\n')
         file.write('(goto top of ramp, point B)\n')
-        file.write(lineB.strip() + ' ' + lineRampEnd.split()[1] + '\n')
+        file.write(self.makeProcessedLineB(lineB, lineRampEnd))
         file.write('(goto cutting depth)\n')
         file.write(self.zCutCode + '\n')
         file.write('(goto start of tab, point A)\n')
         file.write(self.makeReturnToPointALine(lineA, lineB))
+
+    def makeProcessedLineB(self, lineB, lineRampEnd):
+        lineBSplit = lineB.split()
+        gcode = self.gcodeRegex.findall(lineBSplit[0])[0]
+
+        if gcode in ('G02', 'G03') and len(lineBSplit) == 5:
+            lineBSplit.insert(3, lineRampEnd.split()[1])
+            return ' '.join(lineBSplit) + '\n'
+        elif gcode == 'G01' and len(lineBSplit) in (1, 2, 3):
+            return ' '.join(lineBSplit) + lineRampEnd.split()[1] + '\n'
+        else:
+            raise ValueError(f'Unexpected gcode in "{lineB}"')
 
     def makeReturnToPointALine(self, lineA, lineB):
         lineASplit = lineA.split()
@@ -61,13 +74,6 @@ class RampWriter():
             iB = float(self.iRegex.findall(rawIB)[0])
             jB = float(self.jRegex.findall(rawJB)[0])
 
-            if False:
-                print(f'gcode: {rawGcode} {gcode}')
-                print(f'x: {rawX} {x}')
-                print(f'y: {rawY} {y}')
-                print(f'i: {rawI} {i}')
-                print(f'j: {rawJ} {j}')
-
             newGcode = self.gcodeMap[gcodeA]
             newI = xA + iB - xB
             newJ = yA + jB - yB
@@ -86,18 +92,10 @@ def makeOutFileName(inFileName):
     return ''.join(temp)
 
 
-def writeRamp(file, lineA='', lineB='', lineRampEnd=''):
-    file.write('(RAMP ADDED)\n')
-    file.write('(add z height to point B, ramp end)')
-    file.write(lineB.strip() + ' ' + lineRampEnd.split()[1] + '\n')
-    # file.write()
-    file.write(lineA)
-
-
 def main():
     startTagValue = 2.5
     zCutDepth = -0.5
-    zCutFeedRate = 600
+    zCutFeedRate = None  # can be an integer or None
     zTravelHeight = 19.3
 
     isStartTag = ZFinder(startTagValue)
@@ -112,6 +110,7 @@ def main():
         c = 0
         while line:
             line = r.readline()
+            
             if not isStartTag(line):
                 linePrev = line
                 w.write(line)
