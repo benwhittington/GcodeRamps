@@ -12,7 +12,7 @@ class ZFinder():
 
 
 class RampWriter():
-    def __init__(self, zCutDepth, zCutFeedRate, zTravelHeight):
+    def __init__(self, zCutDepth):
         self.zCutCode = f'G01 Z{zCutDepth:.4f}'
         self.gcodeRegex = re.compile(r'G0[1-3]')
         self.xRegex = re.compile(r'(?<=X)\-?\d+\.\d{4}')
@@ -118,7 +118,7 @@ def main():
     zTravelHeight = 19.3
 
     isStartTag = ZFinder(startTagValue)
-    writer = RampWriter(zCutDepth=zCutDepth, zCutFeedRate=zCutFeedRate, zTravelHeight=zTravelHeight)
+    writer = RampWriter(zCutDepth=zCutDepth)
 
     inFileName = sys.argv[1]
     outFileName = makeOutFileName(inFileName)
