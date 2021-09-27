@@ -1,4 +1,4 @@
-import re
+import regex as re
 import sys
 
 
@@ -13,16 +13,17 @@ class ZFinder():
 
 class RampWriter():
     def __init__(self, zCutDepth, zCutFeedRate, zTravelHeight):
-        if zCutFeedRate is None:
-            self.zCutCode = f'G01 Z{zCutDepth:.4f}'
-        else:
-            self.zCutCode = f'G01 Z{zCutDepth:.4f} F{zCutFeedRate:d}'
-        self.zTravelHeightCode = f'G00 Z{zTravelHeight:.4f}'
+        self.zCutCode = f'G01 Z{zCutDepth:.4f}'
         self.gcodeRegex = re.compile(r'G0[1-3]')
         self.xRegex = re.compile(r'(?<=X)\-?\d+\.\d{4}')
         self.yRegex = re.compile(r'(?<=Y)\-?\d+\.\d{4}')
         self.iRegex = re.compile(r'(?<=I)\-?\d+\.\d{4}')
         self.jRegex = re.compile(r'(?<=J)\-?\d+\.\d{4}')
+        self.zFeedRateRegex = re.compile(r'(?<=G0[1-3]\sZ\d+\.\d{4}\sF)\d+')
+        self.xyFeedRateRegex = re.compile(r'(?<=G0[1-3]\sX\d+\.\d{4}.*F)\d+')
+
+        self.zFeedRate = None
+        self.xyFeedRate = None
 
         self.gcodeMap = {
             'G01': 'G01',
@@ -30,7 +31,19 @@ class RampWriter():
             'G03': 'G02'
         }
 
-    def __call__(self, file, lineA='', lineB='', lineRampEnd=''):
+    def checkLineForFeedRates(self, line):
+        if self.zFeedRate is None:
+            match = self.zFeedRateRegex.findall(line)
+            if len(match) == 1:
+                self.zFeedRate = int(match[0])
+                print(f'Found Z feed rate F{self.zFeedRate}')
+        if self.xyFeedRate is None:
+            match = self.xyFeedRateRegex.findall(line)
+            if len(match) == 1:
+                self.xyFeedRate = int(match[0])
+                print(f'Found XY feed rate F{self.xyFeedRate}')
+
+    def writeRamp(self, file, lineA='', lineB='', lineRampEnd=''):
         file.write('(RAMP ADDED)\n')
         file.write('(goto top of ramp, point B)\n')
         file.write(self.makeProcessedLineB(lineB, lineRampEnd))
@@ -40,18 +53,24 @@ class RampWriter():
         file.write(self.makeReturnToPointALine(lineA, lineB))
 
     def makeProcessedLineB(self, lineB, lineRampEnd):
+        if self.zFeedRate is None:
+            raise ValueError(f'Failed to find Z feed rate before it was needed to write ramp')
+
         lineBSplit = lineB.split()
         gcode = self.gcodeRegex.findall(lineBSplit[0])[0]
 
         if gcode in ('G02', 'G03') and len(lineBSplit) == 5:
             lineBSplit.insert(3, lineRampEnd.split()[1])
-            return ' '.join(lineBSplit) + '\n'
+            return  f'{" ".join(lineBSplit)} F{self.zFeedRate}\n'
         elif gcode == 'G01' and len(lineBSplit) in (1, 2, 3):
-            return ' '.join(lineBSplit) + lineRampEnd.split()[1] + '\n'
+            return f'{" ".join(lineBSplit)} {lineRampEnd.split()[1]} F{self.zFeedRate}\n'
         else:
             raise ValueError(f'Unexpected gcode in "{lineB}"')
 
     def makeReturnToPointALine(self, lineA, lineB):
+        if self.xyFeedRate is None:
+            raise ValueError(f'Failed to find XY feed rate before it was needed to write ramp')
+
         lineASplit = lineA.split()
         lineBSplit = lineB.split()
         numFields = len(lineASplit)
@@ -77,7 +96,7 @@ class RampWriter():
             newGcode = self.gcodeMap[gcodeA]
             newI = xA + iB - xB
             newJ = yA + jB - yB
-            newLine = f'{newGcode} X{xA:.4f} Y{yA:.4f} I{newI:.4f} J{newJ:.4f}\n'
+            newLine = f'{newGcode} X{xA:.4f} Y{yA:.4f} I{newI:.4f} J{newJ:.4f} F{self.xyFeedRate}\n'
 
             assert(gcodeA == gcodeB)
 
@@ -99,7 +118,7 @@ def main():
     zTravelHeight = 19.3
 
     isStartTag = ZFinder(startTagValue)
-    writeRamp = RampWriter(zCutDepth=zCutDepth, zCutFeedRate=zCutFeedRate, zTravelHeight=zTravelHeight)
+    writer = RampWriter(zCutDepth=zCutDepth, zCutFeedRate=zCutFeedRate, zTravelHeight=zTravelHeight)
 
     inFileName = sys.argv[1]
     outFileName = makeOutFileName(inFileName)
@@ -110,17 +129,17 @@ def main():
         c = 0
         while line:
             line = r.readline()
-            
+            writer.checkLineForFeedRates(line)
             if not isStartTag(line):
                 linePrev = line
                 w.write(line)
                 continue
 
             lineNext = r.readline()
-            writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
+            writer.writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
             c += 1
 
-    print(f'Modified {c} lines')
+    print(f'Replaced {c} tabs with ramps')
     print(f'Written to {outFileName}')
 
 
