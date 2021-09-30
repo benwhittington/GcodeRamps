@@ -43,7 +43,7 @@ class RampWriter():
                 self.xyFeedRate = int(match[0])
                 print(f'Found XY feed rate F{self.xyFeedRate}')
 
-    def writeRamp(self, file, lineA='', lineB='', lineRampEnd=''):
+    def writeRamp(self, file, lineA='', lineB='', lineRampEnd='', tabHeight=None):
         if self.xyFeedRate is None:
             raise ValueError(f'Failed to find XY feed rate before it was needed to write ramp')
 
@@ -55,19 +55,21 @@ class RampWriter():
         file.write(self.makeProcessedLineB(lineB, lineRampEnd, self.zFeedRate))
         file.write('(goto cutting depth)\n')
         file.write(self.zCutCode + '\n')
-        file.write('(goto start of tab, point A)\n')
+        file.write('(goto start of tab, point A at Z feed rate)\n')
         file.write(self.makeReturnToPointALine(lineA, lineB, self.xyFeedRate))
 
-    def writeTab(self, file, lineA='', lineB='', lineRampEnd=''):
+    def writeTab(self, file, lineA='', lineB='', lineRampEnd='', tabHeight=None):
         if self.xyFeedRate is None:
             raise ValueError(f'Failed to find XY feed rate before it was needed to write tab')
 
         file.write('(TAB ADDED)\n')
-        file.write('(goto top of tab, point B, unmodified)\n')
+        file.write('(goto to tab height)\n')
+        file.write(f'G00 Z{tabHeight:.4f}\n')
+        file.write('(goto point B at tab height, unmodified)\n')
         file.write(lineB)
         file.write('(goto cutting depth)\n')
         file.write(self.zCutCode + '\n')
-        file.write('(goto start of tab, point A)\n')
+        file.write('(goto start of tab, point A at Z feed rate)\n')
         file.write(self.makeReturnToPointALine(lineA, lineB, self.zFeedRate))
 
     def makeProcessedLineB(self, lineB, lineRampEnd, feedRate):
@@ -83,21 +85,25 @@ class RampWriter():
             raise ValueError(f'Unexpected gcode in "{lineB}"')
 
     def makeReturnToPointALine(self, lineA, lineB, feedRate):
+        """
+            For future Ben: line A gcode is irrelevant, only coordinates.
+        """
         lineASplit = lineA.split()
         lineBSplit = lineB.split()
-        numFields = len(lineASplit)
+        numFields = len(lineBSplit) # here
 
         if numFields in (2, 3):
             return lineA
         elif numFields == 5:
-            rawGcodeA, rawXA, rawYA, rawIA, rawJA = lineASplit
+            # don't know how many values in lineA so slice of first 3
+            rawGcodeA, rawXA, rawYA = lineASplit[:3]
             rawGcodeB, rawXB, rawYB, rawIB, rawJB = lineBSplit
 
-            gcodeA = self.gcodeRegex.findall(rawGcodeA)[0]
+            # gcodeA = self.gcodeRegex.findall(rawGcodeA)[0]
             xA = float(self.xRegex.findall(rawXA)[0])
             yA = float(self.yRegex.findall(rawYA)[0])
-            iA = float(self.iRegex.findall(rawIA)[0])
-            jA = float(self.jRegex.findall(rawJA)[0])
+            # iA = float(self.iRegex.findall(rawIA)[0])
+            # jA = float(self.jRegex.findall(rawJA)[0])
 
             gcodeB = self.gcodeRegex.findall(rawGcodeB)[0]
             xB = float(self.xRegex.findall(rawXB)[0])
@@ -105,12 +111,10 @@ class RampWriter():
             iB = float(self.iRegex.findall(rawIB)[0])
             jB = float(self.jRegex.findall(rawJB)[0])
 
-            newGcode = self.gcodeMap[gcodeA]
+            newGcode = self.gcodeMap[gcodeB]
             newI = xA + iB - xB
             newJ = yA + jB - yB
             newLine = f'{newGcode} X{xA:.4f} Y{yA:.4f} I{newI:.4f} J{newJ:.4f} F{feedRate}\n'
-
-            assert(gcodeA == gcodeB)
 
             return newLine
         else:
@@ -124,7 +128,7 @@ def makeOutFileName(inFileName):
 
 
 def main():
-    startTagValue = 2.5
+    startTagValue = 2.5  # also tab height
     zCutDepth = -0.5
 
     isStartTag = ZFinder(startTagValue)
@@ -146,8 +150,8 @@ def main():
                 continue
 
             lineNext = r.readline()
-            # writer.writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
-            writer.writeTab(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
+            # writer.writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line, tabHeight=startTagValue)
+            writer.writeTab(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line, tabHeight=startTagValue)
             c += 1
 
     print(f'Replaced {c} tabs')
