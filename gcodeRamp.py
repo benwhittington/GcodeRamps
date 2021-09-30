@@ -44,18 +44,33 @@ class RampWriter():
                 print(f'Found XY feed rate F{self.xyFeedRate}')
 
     def writeRamp(self, file, lineA='', lineB='', lineRampEnd=''):
-        file.write('(RAMP ADDED)\n')
-        file.write('(goto top of ramp, point B)\n')
-        file.write(self.makeProcessedLineB(lineB, lineRampEnd))
-        file.write('(goto cutting depth)\n')
-        file.write(self.zCutCode + '\n')
-        file.write('(goto start of tab, point A)\n')
-        file.write(self.makeReturnToPointALine(lineA, lineB))
+        if self.xyFeedRate is None:
+            raise ValueError(f'Failed to find XY feed rate before it was needed to write ramp')
 
-    def makeProcessedLineB(self, lineB, lineRampEnd):
         if self.zFeedRate is None:
             raise ValueError(f'Failed to find Z feed rate before it was needed to write ramp')
 
+        file.write('(RAMP ADDED)\n')
+        file.write('(goto top of ramp, point B)\n')
+        file.write(self.makeProcessedLineB(lineB, lineRampEnd, self.zFeedRate))
+        file.write('(goto cutting depth)\n')
+        file.write(self.zCutCode + '\n')
+        file.write('(goto start of tab, point A)\n')
+        file.write(self.makeReturnToPointALine(lineA, lineB, self.xyFeedRate))
+
+    def writeTab(self, file, lineA='', lineB='', lineRampEnd=''):
+        if self.xyFeedRate is None:
+            raise ValueError(f'Failed to find XY feed rate before it was needed to write tab')
+
+        file.write('(TAB ADDED)\n')
+        file.write('(goto top of tab, point B, unmodified)\n')
+        file.write(lineB)
+        file.write('(goto cutting depth)\n')
+        file.write(self.zCutCode + '\n')
+        file.write('(goto start of tab, point A)\n')
+        file.write(self.makeReturnToPointALine(lineA, lineB, self.zFeedRate))
+
+    def makeProcessedLineB(self, lineB, lineRampEnd, feedRate):
         lineBSplit = lineB.split()
         gcode = self.gcodeRegex.findall(lineBSplit[0])[0]
 
@@ -63,14 +78,11 @@ class RampWriter():
             lineBSplit.insert(3, lineRampEnd.split()[1])
             return  f'{" ".join(lineBSplit)} F{self.zFeedRate}\n'
         elif gcode == 'G01' and len(lineBSplit) in (1, 2, 3):
-            return f'{" ".join(lineBSplit)} {lineRampEnd.split()[1]} F{self.zFeedRate}\n'
+            return f'{" ".join(lineBSplit)} {lineRampEnd.split()[1]} F{feedRate}\n'
         else:
             raise ValueError(f'Unexpected gcode in "{lineB}"')
 
-    def makeReturnToPointALine(self, lineA, lineB):
-        if self.xyFeedRate is None:
-            raise ValueError(f'Failed to find XY feed rate before it was needed to write ramp')
-
+    def makeReturnToPointALine(self, lineA, lineB, feedRate):
         lineASplit = lineA.split()
         lineBSplit = lineB.split()
         numFields = len(lineASplit)
@@ -96,7 +108,7 @@ class RampWriter():
             newGcode = self.gcodeMap[gcodeA]
             newI = xA + iB - xB
             newJ = yA + jB - yB
-            newLine = f'{newGcode} X{xA:.4f} Y{yA:.4f} I{newI:.4f} J{newJ:.4f} F{self.xyFeedRate}\n'
+            newLine = f'{newGcode} X{xA:.4f} Y{yA:.4f} I{newI:.4f} J{newJ:.4f} F{feedRate}\n'
 
             assert(gcodeA == gcodeB)
 
@@ -114,8 +126,6 @@ def makeOutFileName(inFileName):
 def main():
     startTagValue = 2.5
     zCutDepth = -0.5
-    zCutFeedRate = None  # can be an integer or None
-    zTravelHeight = 19.3
 
     isStartTag = ZFinder(startTagValue)
     writer = RampWriter(zCutDepth=zCutDepth)
@@ -136,10 +146,11 @@ def main():
                 continue
 
             lineNext = r.readline()
-            writer.writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
+            # writer.writeRamp(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
+            writer.writeTab(w, lineA=linePrev, lineB=lineNext, lineRampEnd=line)
             c += 1
 
-    print(f'Replaced {c} tabs with ramps')
+    print(f'Replaced {c} tabs')
     print(f'Written to {outFileName}')
 
 
